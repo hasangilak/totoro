@@ -1,0 +1,13 @@
+{
+  "name": "cm-git-workbench",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm -w backend i && npm -w frontend i",
+    "dev": "npm -w backend run dev & npm -w frontend run dev",
+    "build": "npm -w backend run build && npm -w frontend run build"
+  }
+}
