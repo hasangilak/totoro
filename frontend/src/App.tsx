@@ -27,7 +27,24 @@ export default function App() {
   const [showQuick, setShowQuick] = useState(false);
   const [autosave, setAutosave] = useState(true);
   const [summary, setSummary] = useState<{branch:string; ahead:number; behind:number} | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const saveTimer = useRef<number | null>(null);
+
+  // Mobile detection
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setSidebarOpen(false);
+      }
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   async function loadTree() {
     const t = await fetchTree();
@@ -77,7 +94,13 @@ export default function App() {
   // Tabs dirty indicator tracks save state
   useEffect(()=>{ setTabs(ts => ts.map(t => t.path===openPath ? { ...t, dirty: saving==='saving' } : t)); }, [saving, openPath]);
 
-  function openFile(p:string){ setOpenPath(p); setDiffPath(""); setTabs(ts => ts.find(t=>t.path===p)?ts:[...ts, { path:p }]); }
+  function openFile(p:string){ 
+    setOpenPath(p); 
+    setDiffPath(""); 
+    setTabs(ts => ts.find(t=>t.path===p)?ts:[...ts, { path:p }]);
+    // Close sidebar on mobile when file is opened
+    if (isMobile) setSidebarOpen(false);
+  }
 
   // Keyboard shortcuts
   useEffect(()=>{
@@ -90,10 +113,12 @@ export default function App() {
       if(mod && e.key==='Enter'){ e.preventDefault(); const msg = prompt('Commit message:'); if(msg) gitCommit(msg).then(()=>{ loadStatus(); loadSummary(); }); }
       if(mod && e.shiftKey && e.key.toLowerCase()==='s'){ e.preventDefault(); if(openPath) gitStage(openPath).then(loadStatus); }
       if(mod && e.key==="Backspace"){ e.preventDefault(); if(openPath && confirm('Discard local changes for current file?')) gitDiscard(openPath).then(()=>{ loadStatus(); if (openPath) fetchFile(openPath).then(setContent); }); }
+      // ESC to close sidebar on mobile
+      if(e.key==="Escape" && isMobile && sidebarOpen){ setSidebarOpen(false); }
     }
     window.addEventListener('keydown', onKey);
     return ()=> window.removeEventListener('keydown', onKey);
-  }, [openPath, content, autosave]);
+  }, [openPath, content, autosave, isMobile, sidebarOpen]);
 
   function commandPalette(){
     const choice = window.prompt('Command: stage-all | unstage-all | discard-all | toggle-autosave');
@@ -108,85 +133,137 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#2B2D31] text-neutral-100">
-      {/* Header Bar */}
-      <header className="h-12 bg-[#313338] border-b border-[#1E1F22] flex items-center justify-between px-4">
-        <div className="flex items-center gap-4">
+      {/* Mobile-First Header Bar */}
+      <header className="h-12 bg-[#313338] border-b border-[#1E1F22] flex items-center justify-between px-2 md:px-4 relative z-50">
+        <div className="flex items-center gap-2 md:gap-4">
+          {/* Mobile Hamburger Menu */}
+          {isMobile && (
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 hover:bg-[#404249] rounded-md md:hidden"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          )}
+
           {/* Logo */}
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-gradient-to-br from-purple-500 to-pink-500 rounded flex items-center justify-center text-white font-bold text-sm">
               E
             </div>
-            <span className="font-semibold">EDD</span>
+            <span className="font-semibold hidden sm:block">EDD</span>
           </div>
           
-          {/* Code/Preview Toggle */}
-          <div className="flex bg-[#2B2D31] rounded-lg p-1">
-            <button className="px-3 py-1 text-sm rounded-md bg-[#5865F2] text-white">
+          {/* Code/Preview Toggle - Hidden on small mobile */}
+          <div className="hidden sm:flex bg-[#2B2D31] rounded-lg p-1">
+            <button className="px-2 md:px-3 py-1 text-xs md:text-sm rounded-md bg-[#5865F2] text-white">
               code
             </button>
-            <button className="px-3 py-1 text-sm rounded-md text-neutral-400 hover:text-white">
+            <button className="px-2 md:px-3 py-1 text-xs md:text-sm rounded-md text-neutral-400 hover:text-white">
               PREVIEW
             </button>
           </div>
         </div>
         
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-neutral-400">
+        <div className="flex items-center gap-1 md:gap-3">
+          {/* Status - Condensed on mobile */}
+          <span className="text-xs md:text-sm text-neutral-400 hidden sm:block">
             {saving === "saving" ? "Saving..." : saving === "saved" ? "Saved" : "Ready"}
           </span>
-          <button className="p-1.5 hover:bg-[#404249] rounded">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
-            </svg>
-          </button>
-          <button className="p-1.5 hover:bg-[#404249] rounded">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-            </svg>
-          </button>
-          <button className="p-1.5 hover:bg-[#404249] rounded">
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-            </svg>
-          </button>
+          
+          {/* Mobile Console Toggle */}
+          {isMobile && (
+            <button
+              onClick={() => setConsoleOpen(!consoleOpen)}
+              className="p-1.5 hover:bg-[#404249] rounded md:hidden"
+              title="Toggle Console"
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+
+          {/* Desktop Action Buttons */}
+          <div className="hidden md:flex items-center gap-3">
+            <button className="p-1.5 hover:bg-[#404249] rounded">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+              </svg>
+            </button>
+            <button className="p-1.5 hover:bg-[#404249] rounded">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+              </svg>
+            </button>
+            <button className="p-1.5 hover:bg-[#404249] rounded">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
+              </svg>
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="flex-1 flex">
+      <div className="flex-1 flex relative overflow-hidden">
         {tree ? (
           <>
+            {/* Mobile Sidebar Overlay */}
+            {isMobile && sidebarOpen && (
+              <div
+                className="absolute inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+                onClick={() => setSidebarOpen(false)}
+              />
+            )}
+
             {/* Sidebar */}
-            <aside className="w-64 bg-[#2B2D31] border-r border-[#1E1F22] flex flex-col">
+            <aside className={`
+              bg-[#2B2D31] border-r border-[#1E1F22] flex flex-col z-40 transition-transform duration-300 ease-in-out
+              ${isMobile 
+                ? `absolute left-0 top-0 bottom-0 w-80 transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}` 
+                : 'w-64 relative'
+              }
+            `}>
               <FileTree root={tree} currentPath={openPath} onOpen={openFile} changes={changesMap} />
             </aside>
 
             {/* Main Content */}
-            <main className="flex-1 flex flex-col bg-[#313338]">
+            <main className="flex-1 flex flex-col bg-[#313338] min-w-0">
               {/* Tabs */}
-              <div className="border-b border-[#1E1F22]">
+              <div className="border-b border-[#1E1F22] overflow-hidden">
                 <Tabs tabs={tabs} active={openPath||null} onSelect={openFile} onClose={(p)=> setTabs(ts=> ts.filter(t=>t.path!==p))} />
               </div>
 
               {/* Editor Area */}
-              <section className="flex-1 bg-[#313338] flex flex-col">
-                <div className="flex-1">
+              <section className="flex-1 bg-[#313338] flex flex-col min-h-0">
+                <div className="flex-1 min-h-0">
                   {diffPath ? (
                     <DiffView path={diffPath} side={diffSide} onAcceptRight={async (p)=>{ await gitStage(p); setDiffSide("index"); loadStatus(); }} />
                   ) : openPath ? (
                     <CodeEditor path={openPath} value={content} onChange={setContent} />
                   ) : (
                     <div className="flex items-center justify-center h-full text-neutral-400">
-                      <div className="text-center">
-                        <div className="text-6xl mb-4">📁</div>
-                        <div>Select a file to start editing</div>
+                      <div className="text-center p-4">
+                        <div className="text-4xl md:text-6xl mb-4">📁</div>
+                        <div className="text-sm md:text-base">
+                          {isMobile ? "Tap the menu to select a file" : "Select a file to start editing"}
+                        </div>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Console/Bottom Panel */}
-                <div className="h-32 bg-[#2B2D31] border-t border-[#1E1F22] flex flex-col">
-                  <div className="h-8 bg-[#313338] border-b border-[#1E1F22] flex items-center px-3 text-sm">
+                {/* Console/Bottom Panel - Responsive */}
+                <div className={`
+                  bg-[#2B2D31] border-t border-[#1E1F22] flex flex-col transition-all duration-300
+                  ${isMobile 
+                    ? (consoleOpen ? 'h-48' : 'h-0 overflow-hidden')
+                    : 'h-32'
+                  }
+                `}>
+                  <div className="h-8 bg-[#313338] border-b border-[#1E1F22] flex items-center px-3 text-sm flex-shrink-0">
                     <div className="flex items-center gap-2">
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
@@ -194,18 +271,21 @@ export default function App() {
                       <span>Console</span>
                     </div>
                     <div className="flex items-center gap-2 ml-auto">
-                      <span className="text-xs text-neutral-400">No Issues ✓</span>
-                      <span className="text-xs text-neutral-400">Files: 0</span>
-                      <span className="text-xs text-neutral-400">Project: 0</span>
-                      <span className="text-xs text-neutral-400">UTF-8</span>
-                      <button className="p-1 hover:bg-[#404249] rounded">
+                      <span className="text-xs text-neutral-400 hidden sm:inline">No Issues ✓</span>
+                      <span className="text-xs text-neutral-400 hidden md:inline">Files: 0</span>
+                      <span className="text-xs text-neutral-400 hidden md:inline">Project: 0</span>
+                      <span className="text-xs text-neutral-400 hidden lg:inline">UTF-8</span>
+                      <button 
+                        className="p-1 hover:bg-[#404249] rounded"
+                        onClick={() => isMobile ? setConsoleOpen(false) : undefined}
+                      >
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                         </svg>
                       </button>
                     </div>
                   </div>
-                  <div className="flex-1 p-3 text-sm font-mono text-neutral-300">
+                  <div className="flex-1 p-2 md:p-3 text-xs md:text-sm font-mono text-neutral-300 overflow-y-auto">
                     <div className="text-neutral-500">[12:04:25] Starting 'sass'...</div>
                     <div className="text-neutral-500">[12:04:25] Starting 'browser-sync'...</div>
                     <div className="text-neutral-500">[12:04:25] Finished 'browser-sync' after 24 ms</div>
@@ -215,22 +295,13 @@ export default function App() {
               </section>
             </main>
 
-            {/* Right Panel - Hidden by default */}
-            {false && <GitChanges
-              changes={changes}
-              onOpenDiff={(p)=>{ setDiffPath(p); setDiffSide("working"); openFile(p); }}
-              onStage={async (p)=>{ await gitStage(p); await loadStatus(); }}
-              onUnstage={async (p)=>{ await gitUnstage(p); await loadStatus(); }}
-              onDiscard={async (p)=>{ if(confirm("Discard local changes?")) { await gitDiscard(p); await loadStatus(); if (p===openPath) fetchFile(openPath).then(setContent); } }}
-            />}
-
             <QuickOpen open={showQuick} onClose={()=>setShowQuick(false)} root={tree} onPick={openFile} />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-neutral-400">
-            <div className="text-center">
-              <div className="animate-spin w-8 h-8 border-2 border-neutral-600 border-t-neutral-300 rounded-full mb-4"></div>
-              <div>Loading project tree...</div>
+            <div className="text-center p-4">
+              <div className="animate-spin w-6 md:w-8 h-6 md:h-8 border-2 border-neutral-600 border-t-neutral-300 rounded-full mb-4 mx-auto"></div>
+              <div className="text-sm md:text-base">Loading project tree...</div>
             </div>
           </div>
         )}
@@ -264,4 +335,3 @@ function LazyDiff({ path, side, onAcceptRight }: { path: string; side: "working"
     </React.Suspense>
   );
 }
-
