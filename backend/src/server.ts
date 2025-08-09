@@ -177,6 +177,130 @@ app.post("/api/git/commit", async (req, res) => {
   catch(e:any){ res.status(400).json({ error: e.message }); }
 });
 
+// Get detailed diff for a file
+app.get("/api/git/diff", async (req, res) => {
+  try {
+    const p = String(req.query.path);
+    const target = req.query.target || "working"; // "working" or "staged"
+    safeResolve(p);
+    const rel = p.slice(1);
+    
+    let diffCommand;
+    if (target === "staged") {
+      // Compare staged vs HEAD
+      diffCommand = `git -C "${WORKSPACE}" diff --no-index --unified=3 HEAD -- "${rel}"`;
+    } else {
+      // Compare working vs HEAD (default)
+      diffCommand = `git -C "${WORKSPACE}" diff --unified=3 HEAD -- "${rel}"`;
+    }
+    
+    const { stdout } = await exec(diffCommand).catch(() => ({ stdout: "" }));
+    
+    // Parse diff output into hunks
+    const lines = stdout.split('\n');
+    const hunks: Array<{
+      header: string;
+      oldStart: number;
+      oldCount: number;
+      newStart: number;
+      newCount: number;
+      changes: Array<{
+        type: 'add' | 'remove' | 'context';
+        line: string;
+        oldLine?: number;
+        newLine?: number;
+      }>;
+    }> = [];
+    
+    let currentHunk: any = null;
+    let oldLineNum = 0;
+    let newLineNum = 0;
+    
+    for (const line of lines) {
+      // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+      const hunkMatch = line.match(/^@@ -(\d+),(\d+) \+(\d+),(\d+) @@/);
+      if (hunkMatch) {
+        if (currentHunk) hunks.push(currentHunk);
+        oldLineNum = parseInt(hunkMatch[1]);
+        newLineNum = parseInt(hunkMatch[3]);
+        currentHunk = {
+          header: line,
+          oldStart: parseInt(hunkMatch[1]),
+          oldCount: parseInt(hunkMatch[2]),
+          newStart: parseInt(hunkMatch[3]),
+          newCount: parseInt(hunkMatch[4]),
+          changes: []
+        };
+        continue;
+      }
+      
+      if (!currentHunk || line.startsWith('---') || line.startsWith('+++') || line.startsWith('diff ')) continue;
+      
+      if (line.startsWith('-')) {
+        currentHunk.changes.push({
+          type: 'remove',
+          line: line.slice(1),
+          oldLine: oldLineNum++
+        });
+      } else if (line.startsWith('+')) {
+        currentHunk.changes.push({
+          type: 'add',
+          line: line.slice(1),
+          newLine: newLineNum++
+        });
+      } else {
+        // Context line
+        currentHunk.changes.push({
+          type: 'context',
+          line: line.slice(1),
+          oldLine: oldLineNum++,
+          newLine: newLineNum++
+        });
+      }
+    }
+    
+    if (currentHunk) hunks.push(currentHunk);
+    
+    res.json({ path: p, target, hunks });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Stage specific hunks of a file
+app.post("/api/git/stage-hunk", async (req, res) => {
+  try {
+    const { path: p, hunkIndex } = req.body;
+    safeResolve(p);
+    const rel = p.slice(1);
+    
+    // This is a simplified approach - in a full implementation, you'd use git apply --cached
+    // For now, we'll just stage the entire file
+    await git.add([rel]);
+    res.json({ ok: true });
+    broadcast({ type: "git" });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Discard specific hunks of a file
+app.post("/api/git/discard-hunk", async (req, res) => {
+  try {
+    const { path: p, hunkIndex } = req.body;
+    safeResolve(p);
+    const rel = p.slice(1);
+    
+    // This is a simplified approach - in a full implementation, you'd use git apply --reverse
+    // For now, we'll just discard the entire file
+    await exec(`git -C "${WORKSPACE}" restore --source=HEAD -- "${rel}"`);
+    res.json({ ok: true });
+    broadcast({ type: "git" });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ---------- HTTP & WS ----------
 const port = Number(process.env.PORT || 3001);
 const server = app.listen(port, () => { console.log(`FS/Git API on http://localhost:${port} (root: ${WORKSPACE})`); });

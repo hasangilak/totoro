@@ -64,3 +64,42 @@ export async function searchRepo(q:string, globs?:string){
   const url = new URL(`${BASE}/api/search`); url.searchParams.set('q', q); if(globs) url.searchParams.set('globs', globs);
   const r = await fetch(url.toString()); if(!r.ok) throw new Error('search'); return r.json();
 }
+
+export type DiffHunk = {
+  header: string;
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  changes: Array<{
+    type: 'add' | 'remove' | 'context';
+    line: string;
+    oldLine?: number;
+    newLine?: number;
+  }>;
+};
+
+export async function gitDiff(path: string, target: 'working' | 'staged' = 'working'): Promise<{path: string; target: string; hunks: DiffHunk[]}> {
+  const url = new URL(`${BASE}/api/git/diff`);
+  url.searchParams.set('path', path);
+  url.searchParams.set('target', target);
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error('Failed to get diff');
+  return res.json();
+}
+
+export async function gitStageHunk(path: string, hunkIndex: number) {
+  await fetch(`${BASE}/api/git/stage-hunk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, hunkIndex })
+  });
+}
+
+export async function gitDiscardHunk(path: string, hunkIndex: number) {
+  await fetch(`${BASE}/api/git/discard-hunk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, hunkIndex })
+  });
+}

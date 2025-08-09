@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FileTree } from "./components/FileTree";
 import { CodeEditor } from "./components/CodeEditor";
 import { GitChanges } from "./components/GitChanges";
+import { GitDiffViewer } from "./components/GitDiffViewer";
 import { Tabs } from "./components/Tabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
@@ -30,6 +31,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [gitDiffPath, setGitDiffPath] = useState<string>("");
   const saveTimer = useRef<number | null>(null);
 
   // Mobile detection
@@ -107,18 +109,30 @@ export default function App() {
     function onKey(e: KeyboardEvent){
       const isMac = navigator.platform.includes('Mac');
       const mod = isMac ? e.metaKey : e.ctrlKey;
+      
+      // File operations
       if(mod && e.key.toLowerCase()==='p'){ e.preventDefault(); setShowQuick(true); }
       if(mod && e.key.toLowerCase()==='k'){ e.preventDefault(); commandPalette(); }
       if(mod && e.key.toLowerCase()==='s'){ e.preventDefault(); if(!autosave && openPath) saveFile(openPath, content); }
+      
+      // Git operations
       if(mod && e.key==='Enter'){ e.preventDefault(); const msg = prompt('Commit message:'); if(msg) gitCommit(msg).then(()=>{ loadStatus(); loadSummary(); }); }
       if(mod && e.shiftKey && e.key.toLowerCase()==='s'){ e.preventDefault(); if(openPath) gitStage(openPath).then(loadStatus); }
       if(mod && e.key==="Backspace"){ e.preventDefault(); if(openPath && confirm('Discard local changes for current file?')) gitDiscard(openPath).then(()=>{ loadStatus(); if (openPath) fetchFile(openPath).then(setContent); }); }
-      // ESC to close sidebar on mobile
-      if(e.key==="Escape" && isMobile && sidebarOpen){ setSidebarOpen(false); }
+      if(mod && e.key.toLowerCase()==='d'){ e.preventDefault(); if(openPath) setGitDiffPath(openPath); } // Show diff for current file
+      if(mod && e.shiftKey && e.key.toLowerCase()==='a'){ e.preventDefault(); gitStageAll().then(loadStatus); } // Stage all
+      if(mod && e.shiftKey && e.key.toLowerCase()==='u'){ e.preventDefault(); gitUnstageAll().then(loadStatus); } // Unstage all
+      
+      // UI navigation
+      if(e.key==="Escape"){ 
+        e.preventDefault(); 
+        if(gitDiffPath) setGitDiffPath(""); // Close diff viewer
+        else if(isMobile && sidebarOpen) setSidebarOpen(false); // Close mobile sidebar
+      }
     }
     window.addEventListener('keydown', onKey);
     return ()=> window.removeEventListener('keydown', onKey);
-  }, [openPath, content, autosave, isMobile, sidebarOpen]);
+  }, [openPath, content, autosave, isMobile, sidebarOpen, gitDiffPath]);
 
   function commandPalette(){
     const choice = window.prompt('Command: stage-all | unstage-all | discard-all | toggle-autosave');
@@ -226,7 +240,23 @@ export default function App() {
                 : 'w-64 relative'
               }
             `}>
-              <FileTree root={tree} currentPath={openPath} onOpen={openFile} changes={changesMap} />
+              <FileTree 
+                root={tree} 
+                currentPath={openPath} 
+                onOpen={openFile} 
+                changes={changesMap} 
+                gitChanges={changes}
+                onOpenDiff={(path) => setGitDiffPath(path)}
+                onStage={async (path) => { await gitStage(path); loadStatus(); }}
+                onUnstage={async (path) => { await gitUnstage(path); loadStatus(); }}
+                onDiscard={async (path) => { 
+                  if (confirm('Discard changes for ' + path.split('/').pop() + '?')) {
+                    await gitDiscard(path); 
+                    loadStatus(); 
+                    if (path === openPath) fetchFile(openPath).then(setContent);
+                  }
+                }}
+              />
             </aside>
 
             {/* Main Content */}
@@ -239,7 +269,21 @@ export default function App() {
               {/* Editor Area */}
               <section className="flex-1 bg-[#313338] flex flex-col min-h-0">
                 <div className="flex-1 min-h-0">
-                  {diffPath ? (
+                  {gitDiffPath ? (
+                    <GitDiffViewer 
+                      path={gitDiffPath} 
+                      onClose={() => setGitDiffPath("")}
+                      onStage={async () => { await gitStage(gitDiffPath); loadStatus(); setGitDiffPath(""); }}
+                      onDiscard={async () => { 
+                        if (confirm('Discard all changes for ' + gitDiffPath.split('/').pop() + '?')) {
+                          await gitDiscard(gitDiffPath); 
+                          loadStatus(); 
+                          if (gitDiffPath === openPath) fetchFile(openPath).then(setContent);
+                          setGitDiffPath("");
+                        }
+                      }}
+                    />
+                  ) : diffPath ? (
                     <DiffView path={diffPath} side={diffSide} onAcceptRight={async (p)=>{ await gitStage(p); setDiffSide("index"); loadStatus(); }} />
                   ) : openPath ? (
                     <CodeEditor path={openPath} value={content} onChange={setContent} />
