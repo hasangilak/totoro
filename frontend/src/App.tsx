@@ -14,7 +14,7 @@ import {
 } from "./lib/fsApi";
 import "./styles.css";
 
-const WS = (import.meta.env.VITE_WS_BASE ?? "ws://localhost:3001") + "/ws";
+const WS = (import.meta.env.VITE_WS_BASE ?? "ws://localhost:3002") + "/ws";
 
 export default function App() {
   const [tree, setTree] = useState<FileNode | null>(null);

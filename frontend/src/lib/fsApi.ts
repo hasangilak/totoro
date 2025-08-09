@@ -2,7 +2,7 @@ export type FileNode =
   | { type: "file"; name: string; path: string }
   | { type: "dir"; name: string; path: string; children: FileNode[] };
 
-const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3001";
+const BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3002";
 
 export async function fetchTree(): Promise<FileNode> {
   const res = await fetch(`${BASE}/api/fs/tree`);
