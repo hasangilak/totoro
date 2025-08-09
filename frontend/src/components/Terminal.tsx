@@ -16,6 +16,8 @@ export const Terminal: React.FC<TerminalProps> = ({ className = '', onReady }) =
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [sessionId] = useState(() => Math.random().toString(36).substring(7));
+  const retryCountRef = useRef(0);
+  const maxRetries = 5;
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -62,20 +64,32 @@ export const Terminal: React.FC<TerminalProps> = ({ className = '', onReady }) =
     
     // Open terminal
     xterm.open(terminalRef.current);
-    fitAddon.fit();
     
     // Store references
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
+    
+    // Wait for DOM to be ready before fitting
+    setTimeout(() => {
+      try {
+        if (terminalRef.current && fitAddon) {
+          fitAddon.fit();
+        }
+      } catch (e) {
+        console.warn('[terminal] Initial fit failed:', e);
+      }
+    }, 100);
 
     // Connect to WebSocket
     const connectWebSocket = () => {
       const wsUrl = `ws://localhost:3002/terminal?session=${sessionId}`;
+      console.log('[terminal] Attempting to connect to:', wsUrl);
       const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {
         console.log('[terminal] Connected to terminal WebSocket');
         setIsConnected(true);
+        retryCountRef.current = 0; // Reset retry counter on successful connection
         onReady?.();
       };
       
@@ -99,11 +113,17 @@ export const Terminal: React.FC<TerminalProps> = ({ className = '', onReady }) =
         }
       };
       
-      ws.onclose = () => {
-        console.log('[terminal] WebSocket connection closed');
+      ws.onclose = (event) => {
+        console.log('[terminal] WebSocket connection closed', event.code, event.reason);
         setIsConnected(false);
-        // Attempt to reconnect after 3 seconds
-        setTimeout(connectWebSocket, 3000);
+        // Only reconnect if it's not a clean close and we haven't exceeded retries
+        if (event.code !== 1000 && !event.wasClean && retryCountRef.current < maxRetries) {
+          retryCountRef.current++;
+          console.log(`[terminal] Reconnecting... (attempt ${retryCountRef.current}/${maxRetries})`);
+          setTimeout(connectWebSocket, Math.min(3000 * retryCountRef.current, 10000)); // Exponential backoff
+        } else if (retryCountRef.current >= maxRetries) {
+          console.error('[terminal] Max reconnection attempts reached');
+        }
       };
       
       ws.onerror = (error) => {
@@ -123,13 +143,25 @@ export const Terminal: React.FC<TerminalProps> = ({ className = '', onReady }) =
 
     // Handle terminal resize
     const handleResize = () => {
-      if (fitAddon && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        fitAddon.fit();
-        wsRef.current.send(JSON.stringify({
-          type: 'terminal:resize',
-          cols: xterm.cols,
-          rows: xterm.rows
-        }));
+      try {
+        if (fitAddon && terminalRef.current) {
+          // Check if element has dimensions
+          const rect = terminalRef.current.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            fitAddon.fit();
+            
+            // Send resize to backend if connected
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: 'terminal:resize',
+                cols: xterm.cols,
+                rows: xterm.rows
+              }));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[terminal] Resize failed:', e);
       }
     };
 
@@ -137,8 +169,8 @@ export const Terminal: React.FC<TerminalProps> = ({ className = '', onReady }) =
     const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(terminalRef.current);
 
-    // Initial connection
-    connectWebSocket();
+    // Initial connection with delay to ensure server is ready
+    setTimeout(connectWebSocket, 200);
 
     // Focus terminal
     xterm.focus();

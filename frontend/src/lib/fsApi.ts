@@ -27,6 +27,30 @@ export async function saveFile(path: string, content: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to save file");
 }
 
+export async function createFile(path: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/fs/create-file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || "Failed to create file");
+  }
+}
+
+export async function createFolder(path: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/fs/create-folder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.error || "Failed to create folder");
+  }
+}
+
 export type GitChange = { path: string; index: string; working_dir: string };
 
 export async function gitStatus(): Promise<{ changed: GitChange[]; branch: string; ahead: number; behind: number; }>{ 

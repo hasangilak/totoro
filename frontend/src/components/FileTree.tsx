@@ -65,12 +65,12 @@ export const FileTree: React.FC<Props> = ({
     }
   };
 
-  const render = (node: FileNode, level: number = 0) => {
+  const render = (node: FileNode, level: number = 0, index: number = 0) => {
     if (node.type === "file") {
       const active = currentPath === node.path;
       return (
         <div
-          key={node.path}
+          key={`${node.path}-${index}`}
           className={`cursor-pointer flex items-center px-2 py-1.5 text-sm hover:bg-[#35373B] rounded-sm mx-1 ${
             active ? "bg-[#404249] text-white" : "text-neutral-300"
           }`}
@@ -93,7 +93,7 @@ export const FileTree: React.FC<Props> = ({
     const isRootFolder = level === 0;
     
     return (
-      <div key={node.path}>
+      <div key={`${node.path}-${index}`}>
         <div
           className={`cursor-pointer flex items-center px-2 py-1.5 text-sm text-neutral-200 hover:bg-[#35373B] rounded-sm mx-1 ${
             isRootFolder ? 'font-semibold' : ''
@@ -115,7 +115,7 @@ export const FileTree: React.FC<Props> = ({
         </div>
         {isExpanded && (
           <div>
-            {node.children.map(child => render(child, level + 1))}
+            {node.children.map((child, childIndex) => render(child, level + 1, childIndex))}
           </div>
         )}
       </div>
@@ -176,7 +176,7 @@ export const FileTree: React.FC<Props> = ({
               </div>
             </div>
             <div className="space-y-0.5">
-              {render(root)}
+              {render(root, 0, 0)}
             </div>
             
             <div className="mt-6">

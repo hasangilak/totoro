@@ -9,6 +9,8 @@ import { z } from "zod";
 import simpleGit, { SimpleGit } from "simple-git";
 import { exec as _exec } from "child_process";
 import { promisify } from "util";
+import * as pty from "node-pty";
+import os from "os";
 
 const exec = promisify(_exec);
 
@@ -44,7 +46,7 @@ async function readTree(dirAbs: string, urlPath: string = "/"): Promise<FileNode
     if (e.isDirectory()) children.push(await readTree(childAbs, childUrlPath));
     else if (e.isFile()) children.push({ type: "file", name: e.name, path: childUrlPath });
   }
-  return { type: "dir", name: path.basename(dirAbs) || "project", path: "/", children };
+  return { type: "dir", name: path.basename(dirAbs) || "project", path: urlPath, children };
 }
 
 app.get("/api/fs/tree", async (_req, res) => {
@@ -71,6 +73,47 @@ app.put("/api/fs/file", async (req, res) => {
     await fs.writeFile(abs, content, "utf8");
     res.json({ ok: true });
     broadcast({ type: "fs:change", path: p });
+  } catch (e:any) { res.status(400).json({ error: e.message }); }
+});
+
+const createFileSchema = z.object({ path: z.string().startsWith("/") });
+app.post("/api/fs/create-file", async (req, res) => {
+  try {
+    const { path: p } = createFileSchema.parse(req.body);
+    const abs = safeResolve(p);
+    
+    // Check if file already exists
+    if (existsSync(abs)) {
+      return res.status(400).json({ error: "File already exists" });
+    }
+    
+    // Create directory if it doesn't exist
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    
+    // Create empty file
+    await fs.writeFile(abs, "", "utf8");
+    
+    res.json({ ok: true });
+    broadcast({ type: "fs:tree" });
+  } catch (e:any) { res.status(400).json({ error: e.message }); }
+});
+
+const createFolderSchema = z.object({ path: z.string().startsWith("/") });
+app.post("/api/fs/create-folder", async (req, res) => {
+  try {
+    const { path: p } = createFolderSchema.parse(req.body);
+    const abs = safeResolve(p);
+    
+    // Check if folder already exists
+    if (existsSync(abs)) {
+      return res.status(400).json({ error: "Folder already exists" });
+    }
+    
+    // Create directory
+    await fs.mkdir(abs, { recursive: true });
+    
+    res.json({ ok: true });
+    broadcast({ type: "fs:tree" });
   } catch (e:any) { res.status(400).json({ error: e.message }); }
 });
 
@@ -305,7 +348,38 @@ app.post("/api/git/discard-hunk", async (req, res) => {
 const port = Number(process.env.PORT || 3001);
 const server = app.listen(port, () => { console.log(`FS/Git API on http://localhost:${port} (root: ${WORKSPACE})`); });
 
-const wss = new WebSocketServer({ server, path: "/ws" });
+const wss = new WebSocketServer({ 
+  server, 
+  path: "/ws",
+  perMessageDeflate: false,
+  clientTracking: true 
+});
+
+const terminalWss = new WebSocketServer({ 
+  server, 
+  path: "/terminal",
+  perMessageDeflate: false,
+  clientTracking: true 
+});
+
+// Add connection handlers for main WebSocket
+wss.on('connection', (ws, req) => {
+  console.log('[ws] New WebSocket connection to /ws');
+  
+  ws.on('error', (error) => {
+    console.error('[ws] WebSocket error on /ws:', error);
+  });
+  
+  ws.on('close', (code, reason) => {
+    console.log(`[ws] WebSocket connection to /ws closed: ${code} ${reason}`);
+  });
+});
+
+wss.on('error', (error) => {
+  console.error('[ws] WebSocket server error on /ws:', error);
+});
+
+console.log('[ws] WebSocket servers initialized on paths /ws and /terminal');
 const watcher = chokidar.watch(WORKSPACE, { ignored: /(^|[\/])\.(git|cache)|node_modules|dist|build/, ignoreInitial: true });
 function broadcast(msg: unknown) { const data = JSON.stringify(msg); wss.clients.forEach((c: any) => (c.readyState === 1) && c.send(data)); }
 watcher
@@ -314,3 +388,87 @@ watcher
   .on("unlink", () => broadcast({ type: "fs:tree" }))
   .on("unlinkDir", () => broadcast({ type: "fs:tree" }))
   .on("change", (abs) => broadcast({ type: "fs:change", path: abs.replace(WORKSPACE, "") || "/" }));
+
+// ---------- TERMINAL ----------
+const terminals = new Map<string, pty.IPty>();
+
+terminalWss.on('error', (error) => {
+  console.error('[terminal] Terminal WebSocket server error:', error);
+});
+
+terminalWss.on('connection', (ws, req) => {
+  console.log('[terminal] New connection attempt to /terminal');
+  
+  try {
+    const url = new URL(req.url!, `http://${req.headers.host}`);
+    const sessionId = url.searchParams.get('session') || Math.random().toString(36).substring(7);
+    
+    console.log(`[terminal] New terminal session: ${sessionId}`);
+  
+    // Create new terminal process
+    const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+    const ptyProcess = pty.spawn(shell, [], {
+      name: 'xterm-color',
+      cols: 80,
+      rows: 24,
+      cwd: WORKSPACE,
+      env: { ...process.env, TERM: 'xterm-256color' }
+    });
+  
+  terminals.set(sessionId, ptyProcess);
+  
+  // Send terminal data to client
+  ptyProcess.onData((data) => {
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'terminal:data', data }));
+    }
+  });
+  
+  // Handle terminal exit
+  ptyProcess.onExit(() => {
+    terminals.delete(sessionId);
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'terminal:exit' }));
+    }
+  });
+  
+  // Handle messages from client
+  ws.on('message', (message) => {
+    try {
+      const msg = JSON.parse(message.toString());
+      switch (msg.type) {
+        case 'terminal:input':
+          ptyProcess.write(msg.data);
+          break;
+        case 'terminal:resize':
+          ptyProcess.resize(msg.cols, msg.rows);
+          break;
+      }
+    } catch (e) {
+      console.error('[terminal] Invalid message:', e);
+    }
+  });
+  
+  // Cleanup on disconnect
+  ws.on('close', () => {
+    console.log(`[terminal] Terminal session closed: ${sessionId}`);
+    if (terminals.has(sessionId)) {
+      terminals.get(sessionId)?.kill();
+      terminals.delete(sessionId);
+    }
+  });
+  
+    // Send initial prompt
+    setTimeout(() => {
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'terminal:ready', sessionId }));
+      }
+    }, 100);
+  } catch (error) {
+    console.error('[terminal] Error setting up terminal session:', error);
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'terminal:error', message: 'Failed to initialize terminal' }));
+      ws.close();
+    }
+  }
+});

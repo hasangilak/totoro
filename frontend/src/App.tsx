@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileTree } from "./components/FileTree";
 import { CodeEditor } from "./components/CodeEditor";
 import { GitChanges } from "./components/GitChanges";
@@ -7,9 +7,11 @@ import { Tabs } from "./components/Tabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
 import { Terminal } from "./components/Terminal";
+import { TerminalManager, TerminalManagerRef } from "./components/TerminalManager";
+import { TopBarActions } from "./components/TopBarActions";
 import type { FileNode, GitChange } from "./lib/fsApi";
 import {
-  fetchTree, fetchFile, saveFile,
+  fetchTree, fetchFile, saveFile, createFile, createFolder,
   gitStatus, gitStage, gitUnstage, gitDiscard, gitCommit, gitFileVersions,
   gitStageAll, gitUnstageAll, gitDiscardAll, gitSummary
 } from "./lib/fsApi";
@@ -31,8 +33,11 @@ export default function App() {
   const [summary, setSummary] = useState<{branch:string; ahead:number; behind:number} | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleHeight, setConsoleHeight] = useState(200); // Default height in pixels
+  const [isResizing, setIsResizing] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [gitDiffPath, setGitDiffPath] = useState<string>("");
+  const terminalManagerRef = useRef<TerminalManagerRef>(null);
   const saveTimer = useRef<number | null>(null);
 
   // Mobile detection
@@ -115,6 +120,9 @@ export default function App() {
       if(mod && e.key.toLowerCase()==='p'){ e.preventDefault(); setShowQuick(true); }
       if(mod && e.key.toLowerCase()==='k'){ e.preventDefault(); commandPalette(); }
       if(mod && e.key.toLowerCase()==='s'){ e.preventDefault(); if(!autosave && openPath) saveFile(openPath, content); }
+      if(mod && e.key.toLowerCase()==='n' && !e.shiftKey){ e.preventDefault(); handleNewFile(); }
+      if(mod && e.shiftKey && e.key.toLowerCase()==='n'){ e.preventDefault(); handleNewFolder(); }
+      if(mod && e.key==='`'){ e.preventDefault(); handleNewTerminal(); }
       
       // Git operations
       if(mod && e.key==='Enter'){ e.preventDefault(); const msg = prompt('Commit message:'); if(msg) gitCommit(msg).then(()=>{ loadStatus(); loadSummary(); }); }
@@ -144,10 +152,72 @@ export default function App() {
     else if(choice==='toggle-autosave') setAutosave(a=>!a);
   }
 
+  // Top bar action handlers
+  async function handleNewFile() {
+    const fileName = prompt('Enter file name:');
+    if (!fileName || !fileName.trim()) return;
+    
+    try {
+      const filePath = fileName.startsWith('/') ? fileName : `/${fileName.trim()}`;
+      await createFile(filePath);
+      await loadTree();
+      openFile(filePath);
+    } catch (error: any) {
+      alert(error.message || 'Failed to create file');
+    }
+  }
+
+  async function handleNewFolder() {
+    const folderName = prompt('Enter folder name:');
+    if (!folderName || !folderName.trim()) return;
+    
+    try {
+      const folderPath = folderName.startsWith('/') ? folderName : `/${folderName.trim()}`;
+      await createFolder(folderPath);
+      await loadTree();
+    } catch (error: any) {
+      alert(error.message || 'Failed to create folder');
+    }
+  }
+
+  function handleNewTerminal() {
+    if (terminalManagerRef.current) {
+      terminalManagerRef.current.addTerminal();
+    }
+    // Ensure console is visible on mobile
+    if (isMobile && !consoleOpen) {
+      setConsoleOpen(true);
+    }
+  }
+
+  // Terminal resize handlers
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    
+    const startY = e.clientY;
+    const startHeight = consoleHeight;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaY = startY - e.clientY; // Inverted because we're resizing from bottom up
+      const newHeight = Math.max(100, Math.min(600, startHeight + deltaY)); // Min 100px, Max 600px
+      setConsoleHeight(newHeight);
+    };
+    
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [consoleHeight]);
+
   const changesMap = useMemo(()=> Object.fromEntries(changes.map(c => [c.path, (c.working_dir||c.index)||''])) , [changes]);
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#2B2D31] text-neutral-100">
+    <div className={`h-screen w-screen flex flex-col bg-[#2B2D31] text-neutral-100 ${isResizing ? 'select-none cursor-row-resize' : ''}`}>
       {/* Mobile-First Header Bar */}
       <header className="h-12 bg-[#313338] border-b border-[#1E1F22] flex items-center justify-between px-2 md:px-4 relative z-50">
         <div className="flex items-center gap-2 md:gap-4">
@@ -203,6 +273,11 @@ export default function App() {
 
           {/* Desktop Action Buttons */}
           <div className="hidden md:flex items-center gap-3">
+            <TopBarActions
+              onNewFile={handleNewFile}
+              onNewFolder={handleNewFolder}
+              onNewTerminal={handleNewTerminal}
+            />
             <button className="p-1.5 hover:bg-[#404249] rounded">
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
@@ -213,12 +288,15 @@ export default function App() {
                 <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
               </svg>
             </button>
-            <button className="p-1.5 hover:bg-[#404249] rounded">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-              </svg>
-            </button>
           </div>
+          
+          {/* Mobile Action Buttons */}
+          <TopBarActions
+            onNewFile={handleNewFile}
+            onNewFolder={handleNewFolder}
+            onNewTerminal={handleNewTerminal}
+            className="md:hidden"
+          />
         </div>
       </header>
 
@@ -302,12 +380,21 @@ export default function App() {
 
                 {/* Console/Bottom Panel - Responsive */}
                 <div className={`
-                  bg-[#2B2D31] border-t border-[#1E1F22] flex flex-col transition-all duration-300
+                  bg-[#2B2D31] border-t border-[#1E1F22] flex flex-col relative
                   ${isMobile 
                     ? (consoleOpen ? 'h-48' : 'h-0 overflow-hidden')
-                    : 'h-32'
+                    : ''
                   }
-                `}>
+                `} style={!isMobile ? { height: `${consoleHeight}px` } : {}}>
+                  {/* Resize Handle - Desktop only */}
+                  {!isMobile && (
+                    <div
+                      className={`absolute top-0 left-0 right-0 h-1 cursor-row-resize hover:bg-[#5865F2] transition-colors ${isResizing ? 'bg-[#5865F2]' : 'hover:bg-[#404249]'}`}
+                      onMouseDown={startResize}
+                      title="Drag to resize terminal"
+                    />
+                  )}
+                  
                   <div className="h-8 bg-[#313338] border-b border-[#1E1F22] flex items-center px-3 text-sm flex-shrink-0">
                     <div className="flex items-center gap-2">
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -331,7 +418,7 @@ export default function App() {
                     </div>
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <Terminal className="h-full" />
+                    <TerminalManager ref={terminalManagerRef} className="h-full" />
                   </div>
                 </div>
               </section>
