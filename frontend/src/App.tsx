@@ -6,6 +6,7 @@ import { GitDiffViewer } from "./components/GitDiffViewer";
 import { Tabs } from "./components/Tabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
+import { Terminal } from "./components/Terminal";
 import type { FileNode, GitChange } from "./lib/fsApi";
 import {
   fetchTree, fetchFile, saveFile,
@@ -329,11 +330,8 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex-1 p-2 md:p-3 text-xs md:text-sm font-mono text-neutral-300 overflow-y-auto">
-                    <div className="text-neutral-500">[12:04:25] Starting 'sass'...</div>
-                    <div className="text-neutral-500">[12:04:25] Starting 'browser-sync'...</div>
-                    <div className="text-neutral-500">[12:04:25] Finished 'browser-sync' after 24 ms</div>
-                    <div className="text-blue-400">[BS] Access URLs:</div>
+                  <div className="flex-1 overflow-hidden">
+                    <Terminal className="h-full" />
                   </div>
                 </div>
               </section>
